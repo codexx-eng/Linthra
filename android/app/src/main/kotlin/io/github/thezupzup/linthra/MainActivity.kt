@@ -12,6 +12,10 @@ import com.ryanheise.audioservice.AudioServiceActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import kotlin.math.hypot
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.IntentFilter
+
 
 class MainActivity : AudioServiceActivity() {
     private val displayRefreshRate by lazy { DisplayRefreshRate(this) }
@@ -28,17 +32,35 @@ class MainActivity : AudioServiceActivity() {
     private var visualizer: Visualizer? = null
     @Volatile private var latestBands: DoubleArray = DoubleArray(32)
     private var askedAudioPermission = false
-
+    private var currentSessionId = 0
+    private val sessionReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val sid = intent?.getIntExtra(android.media.audiofx.AudioEffect.EXTRA_AUDIO_SESSION, 0) ?: 0
+            if (sid != 0 && sid != currentSessionId) {
+                currentSessionId = sid
+                stopCavaVisualizer()
+                startCavaVisualizer()
+            }
+        }
+    }
+    
     override fun onResume() {
         super.onResume()
         displayRefreshRate.onResume()
+        val filter = IntentFilter(android.media.audiofx.AudioEffect.ACTION_OPEN_AUDIO_EFFECT_CONTROL_SESSION)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(sessionReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(sessionReceiver, filter)
+        }
     }
 
     override fun onPause() {
+        try { unregisterReceiver(sessionReceiver) } catch (_: Exception) {}
         displayRefreshRate.onPause()
         super.onPause()
     }
-
+    
     override fun onDestroy() {
         stopCavaVisualizer()
         super.onDestroy()
@@ -117,7 +139,7 @@ class MainActivity : AudioServiceActivity() {
         }
         if (visualizer != null) return
         try {
-            val vis = Visualizer(0)
+            val vis = Visualizer(currentSessionId)
             vis.captureSize = Visualizer.getCaptureSizeRange().last()
             vis.setDataCaptureListener(object : Visualizer.OnDataCaptureListener {
                 override fun onWaveFormDataCapture(v: Visualizer?, waveform: ByteArray?, samplingRate: Int) {}
