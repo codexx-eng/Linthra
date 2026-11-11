@@ -118,7 +118,7 @@ class MainActivity : AudioServiceActivity() {
         if (visualizer != null) return
         try {
             val vis = Visualizer(0)
-            vis.captureSize = Visualizer.getCaptureSizeRange()[1]
+            vis.captureSize = Visualizer.getCaptureSizeRange().last()
             vis.setDataCaptureListener(object : Visualizer.OnDataCaptureListener {
                 override fun onWaveFormDataCapture(v: Visualizer?, waveform: ByteArray?, samplingRate: Int) {}
                 override fun onFftDataCapture(v: Visualizer?, fft: ByteArray?, samplingRate: Int) {
@@ -128,11 +128,11 @@ class MainActivity : AudioServiceActivity() {
                     val out = DoubleArray(32)
                     for (b in 0 until 32) {
                         val idx = (b * maxBin) / 32
-                        val r = fft[idx * 2].toDouble()
-                        val im = fft[idx * 2 + 1].toDouble()
+                        val r = fft.get(idx * 2).toDouble()
+                        val im = fft.get(idx * 2 + 1).toDouble()
                         val mag = hypot(r, im)
                         val boost = 1.0 + (b / 32.0) * 1.4
-                        out[b] = ((mag / 64.0) * boost).coerceIn(0.0, 1.0)
+                        out.set(b, ((mag / 64.0) * boost).coerceIn(0.0, 1.0))
                     }
                     latestBands = out
                 }
@@ -155,7 +155,7 @@ class MainActivity : AudioServiceActivity() {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         if (requestCode == REQUEST_CODE_RECORD_AUDIO) {
-            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            if (grantResults.isNotEmpty() && grantResults.first() == PackageManager.PERMISSION_GRANTED) {
                 startCavaVisualizer()
             }
             return
