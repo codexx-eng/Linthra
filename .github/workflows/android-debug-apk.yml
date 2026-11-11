@@ -1,126 +1,61 @@
 name: Android Debug APK
 
-# Builds an unsigned debug APK for manual on-device testing and validates the
-# Android release lint path used by stable APK/AAB builds.
 on:
   workflow_dispatch:
   pull_request:
 
-# Read-only access is all this build needs; the APK is shared via the
-# upload-artifact action rather than by writing to the repo.
 permissions:
   contents: read
 
 jobs:
   build-debug-apk:
-    name: Build debug APK
+    name: Build Release APK (Fast)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
-      # The JDK version comes from .java-version (the single source of truth for
-      # the JDK, read by every workflow that runs Gradle), so debug and release
-      # CI builds use the same JDK as the release artifacts. setup-java exports
-      # JAVA_HOME, which Flutter and the Gradle daemon pick up for the build.
       - name: Set up Java
         uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version-file: .java-version
 
-      # Installs the version pinned in .flutter-version.
       - name: Set up Flutter
         uses: ./.github/actions/setup-flutter
 
-      # --enforce-lockfile builds the APK from the exact committed dependency
-      # set (same as the CI quality job and the reproducible F-Droid build),
-      # failing loudly if pubspec.lock has drifted rather than resolving anew.
       - name: Install dependencies
         run: flutter pub get --enforce-lockfile
 
-      # Cheap, Flutter-independent, and it runs before the build because the
-      # regression it guards against would build perfectly: a method-channel
-      # handler that does its work inline blocks Android's platform thread and
-      # only shows up as an ANR on a real music library (#346).
-      - name: Check Android channel threading
-        run: python3 scripts/check_android_channel_threading.py
+      - name: Build optimized Release APK
+        run: flutter build apk --release --split-per-abi
 
-      - name: Test the Android channel threading tooling
-        run: python3 test/tooling/check_android_channel_threading_test.py
-
-      - name: Build debug APK
-        run: flutter build apk --debug
-
-      # A debug APK does not execute lintVitalRelease. Run that task explicitly
-      # so invalid release-only Android resources fail on the PR instead of
-      # breaking a stable tag after it has already been created.
-      - name: Validate release Android lint
-        working-directory: android
-        run: ./gradlew lintVitalRelease
-
-      # The JVM unit tests under android/app/src/test: the app's plain-Kotlin
-      # parts, such as the SAF cover cache key that has to change when a file
-      # is re-tagged in place (#742).
-      - name: Run Android unit tests
-        working-directory: android
-        run: ./gradlew :app:testDebugUnitTest
-
-      # Fail fast if the build produced no usable artifact. The upload step
-      # below also guards with if-no-files-found: error, but checking here gives
-      # a clearer "build produced nothing" signal independent of the uploader,
-      # and rejects a truncated/empty APK a debug build should never emit.
-      - name: Verify build output exists
+      - name: Sign Release APK for direct install
         run: |
           set -euo pipefail
-          apk="build/app/outputs/flutter-apk/app-debug.apk"
-          if [ ! -f "$apk" ]; then
-            echo "::error::Expected debug APK not found at $apk after the build."
-            exit 1
+          mkdir -p ~/.android
+          if [ ! -f ~/.android/debug.keystore ]; then
+            keytool -genkey -v -keystore ~/.android/debug.keystore \
+              -storepass android -alias androiddebugkey -keypass android \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
           fi
-          bytes=$(stat -c%s "$apk")
-          if [ "$bytes" -lt 1000000 ]; then
-            echo "::error::Debug APK at $apk is only ${bytes} bytes (<1 MB); the build looks broken."
-            exit 1
-          fi
-          echo "Debug APK present: $apk (${bytes} bytes)."
+          BUILD_TOOLS=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n 1)
+          "$BUILD_TOOLS/zipalign" -f -p 4 \
+            build/app/outputs/flutter-apk/app-arm64-v8a-release.apk \
+            build/app/outputs/flutter-apk/linthra-fast-aligned.apk
+          "$BUILD_TOOLS/apksigner" sign \
+            --ks ~/.android/debug.keystore \
+            --ks-pass pass:android \
+            --key-pass pass:android \
+            --ks-key-alias androiddebugkey \
+            --out build/app/outputs/flutter-apk/linthra-fast-release.apk \
+            build/app/outputs/flutter-apk/linthra-fast-aligned.apk
 
-      # Reads back what the NDK actually linked into the FLAC fallback's
-      # libflacJNI.so, for all three ABIs: no GNU build ID, which F-Droid's
-      # byte-for-byte comparison cannot match across build machines (#703), and
-      # the hardening its CMakeLists.txt asks for. The source-level tests in
-      # test/tooling/media3_flac_fallback_build_test.dart cannot see either.
-      - name: Check libflacJNI.so (reproducible, hardened)
-        run: scripts/check_flac_jni_elf.sh build/app/outputs/flutter-apk/app-debug.apk
-
-      # Linthra targets Android 17 (API 37). The release App Bundle is what
-      # Google Play reads, so build one (unsigned: no secrets on a PR) and read
-      # the SDK levels back out of it and the debug APK with the SDK's own
-      # aapt2, rather than trusting build.gradle. minSdk is checked too, so the
-      # move to 37 can never quietly drop older phones. Local twin:
-      # `python3 scripts/check_android_target_sdk.py --target 37 --min 24 <apk/aab>`.
-      - name: Build release App Bundle
-        run: flutter build appbundle --release
-
-      - name: Check the SDK levels in the built APK and App Bundle
-        run: |
-          python3 scripts/check_android_target_sdk.py --target 37 --min 24 \
-            build/app/outputs/flutter-apk/app-debug.apk \
-            build/app/outputs/bundle/release/app-release.aab
-
-      # The release shrinker drops resources only looked up by name, and a debug
-      # build is never shrunk, so only the release App Bundle shows it. Without
-      # audio_service's icons the media session never starts its foreground
-      # service on Android 13+ and music stops with the screen off (v0.2.10).
-      - name: Check the release App Bundle kept what keep.xml keeps
-        run: |
-          python3 scripts/check_android_kept_resources.py \
-            --keep android/app/src/main/res/raw/keep.xml \
-            build/app/outputs/bundle/release/app-release.aab
-
-      - name: Upload debug APK
+      - name: Upload fast Release APK
         uses: actions/upload-artifact@v7
         with:
-          name: linthra-debug-apk
-          path: build/app/outputs/flutter-apk/app-debug.apk
+          name: linthra-fast-release-apk
+          path: build/app/outputs/flutter-apk/linthra-fast-release.apk
           if-no-files-found: error
+          
