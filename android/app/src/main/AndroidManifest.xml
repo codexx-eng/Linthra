@@ -1,100 +1,20 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- Background playback / media-session permissions for audio_service.
-         Kept deliberately minimal: only what a foreground media-playback
-         service needs. No storage or network permissions are added here.
-
-         FOREGROUND_SERVICE: lets audio_service run its playback service in the
-         foreground so audio keeps playing while the app is backgrounded.
-         FOREGROUND_SERVICE_MEDIA_PLAYBACK: the typed-foreground-service grant
-         required on Android 14+ (API 34) for a service of type
-         "mediaPlayback"; without it the service cannot start on new devices. -->
+<manifest xmlns:android="http://android.com">
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission
         android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
-
-    <!-- WAKE_LOCK: keeps the CPU (and, paired with the foreground media service,
-         the Wi-Fi radio) awake while audio is playing so playback and streaming
-         survive the screen being off. audio_service's foreground service holds
-         this lock only while it reports `playing`; the manifest merger already
-         pulls this permission in from the audio_service plugin, but it is
-         declared here too so the background-playback permission set stays
-         auditable in one place. It grants no network or storage access. -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
-
-    <!-- POST_NOTIFICATIONS: required on Android 13+ (API 33) for the
-         audio_service media notification (and its transport controls) to appear
-         at all. It is a runtime permission the user must grant; the app asks
-         once on first launch (see NotificationPermission). Without it the
-         service still runs but the notification / lock-screen controls are
-         silently suppressed on modern devices. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-
-    <!-- Optional device-wide local music mode (#548). Android 13+ exposes this
-         as the normal visible/revocable "Music and audio" permission. Older
-         Android releases use READ_EXTERNAL_STORAGE for the equivalent shared
-         audio-library access, capped at API 32 so it cannot turn into broader
-         storage access on modern devices. Neither permission is requested on
-         launch: Linthra asks only when the user explicitly chooses "All music
-         on this device". The existing SAF folder mode needs neither permission. -->
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
     <uses-permission
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
-
-    <!-- INTERNET: needed to reach a self-hosted Jellyfin server (connection
-         test, sign-in, library sync, and streaming). Declared here so a
-         release build can stream too; the debug/profile manifests also add it
-         for Flutter's tooling, and the manifest merger de-duplicates. -->
     <uses-permission android:name="android.permission.INTERNET" />
-
-    <!-- ACCESS_NETWORK_STATE: reads only the active connection's Android
-         metering/capability flags so downloads can distinguish unmetered,
-         metered, offline, and unknown states. It exposes no SSID, carrier, IP,
-         location, server address, or credential and requires no runtime prompt. -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-
-    <!-- ACCESS_LOCAL_NETWORK: Android 17 (API 37) blocks connections to the
-         local network (a Jellyfin, Navidrome or Plex server at 192.168.x.x, a
-         NAS, a .local name) for apps targeting 37 until the user grants this
-         runtime permission, part of the "Nearby devices" group. Linthra asks
-         only when the user reaches for a server on their own network (testing
-         or signing in to one, or playing from one while the app is open), and
-         only for a server that actually resolves to a local address; a server
-         on the internet never triggers it. Without it, local music and remote
-         servers on the internet keep working. Older Android versions do not
-         know the permission and ignore this line. See LocalNetworkPermission
-         and docs/android-17.md. -->
     <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
-
-    <!-- CHANGE_WIFI_MULTICAST_STATE: lets the app receive multicast Wi-Fi
-         packets so mDNS (`_googlecast._tcp`) discovery can find Chromecast
-         devices on the local network. Required by the `bonsoir` discovery
-         plugin (which uses Android's AOSP NsdManager, not Google Play
-         Services) and merged from it; declared here explicitly so the
-         permission set stays auditable in one place. It grants no internet or
-         storage access of its own — only local-network service discovery. The
-         cast session itself connects over the already-declared INTERNET
-         permission. No proprietary/GMS cast dependency is used; see
-         docs/fdroid-readiness.md. -->
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 
-    <!-- networkSecurityConfig: permits cleartext (http) traffic so a self-hosted
-         Navidrome/Subsonic or Jellyfin server on the local network (e.g.
-         http://192.168.1.50:4533) can be reached. Android blocks cleartext by
-         default on modern targets; see res/xml/network_security_config.xml for
-         the rationale. HTTPS trusts system CAs plus user-installed CAs, so a
-         self-hosted server's private CA works once installed on the device;
-         certificates not anchored in either store are still rejected.
-
-         enableOnBackInvokedCallback="false": Back keeps reaching the app as
-         onBackPressed on Android 16 and later, where predictive back is
-         otherwise on for apps targeting API 36 or higher (Linthra targets 37).
-         With it on, Android only hands Flutter a Back while the framework
-         says it handles one, which it never says for the frame's own Back
-         handling (a Folders level, another tab back to Library): those Backs
-         left the app. And a back swipe closed every tab's open page, hidden
-         ones included, and the page under an open dialog instead of the
-         dialog. See test/features/shell/home_shell_back_test.dart. -->
     <application
         android:label="Linthra"
         android:name="${applicationName}"
@@ -111,38 +31,12 @@
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
             android:windowSoftInputMode="adjustResize">
-            <!-- Specifies an Android theme to apply to this Activity as soon as
-                  the Android process has started. This theme is visible to the user
-                  while the Flutter UI initializes. After that, this theme continues
-                  to determine the Window background behind the Flutter UI. -->
             <meta-data
               android:name="io.flutter.embedding.android.NormalTheme"
               android:resource="@style/NormalTheme"
               />
-            <!-- The MAIN/LAUNCHER intent-filter lives on the <activity-alias>
-                  entries below, not here: each alias supplies one selectable
-                  launcher icon while targeting this same activity. MainActivity
-                  stays the single real activity (Flutter engine host + audio
-                  session); the system launches it through whichever alias is
-                  enabled. -->
         </activity>
 
-        <!-- Launcher-icon aliases — one per Appearance branding variant.
-             Exactly one is enabled at a time; the enabled alias supplies the
-             home-screen / app-drawer icon. All target .MainActivity, so app
-             launch, the audio_service media session, Android Auto, the media
-             notification, deep links, and the artwork provider behave
-             identically no matter which icon is active. Switching is done at
-             runtime by LauncherIconChannel via
-             PackageManager.setComponentEnabledSetting(..., DONT_KILL_APP), so
-             playback and the foreground service are never interrupted.
-
-             IconClassic ships enabled and reuses the existing @mipmap/ic_launcher
-             (the default mark is unchanged). The others are generated by
-             tool/branding/generate_icons.py as @mipmap/ic_launcher_<variant>;
-             see docs/app-icon-branding.md. These android:name simple names
-             mirror LauncherIconAliases (Dart) and LauncherIconChannel.ALIASES
-             (Kotlin) — keep all three in step. -->
         <activity-alias
             android:name=".IconClassic"
             android:enabled="true"
@@ -192,11 +86,6 @@
             </intent-filter>
         </activity-alias>
 
-        <!-- audio_service playback service. Runs as a foreground service of
-             type "mediaPlayback" so audio survives backgrounding, and exposes
-             the MediaBrowserService action that Android Auto / other media
-             browsers bind to. The class is provided by the audio_service
-             plugin; we only declare it. -->
         <service
             android:name="com.ryanheise.audioservice.AudioService"
             android:foregroundServiceType="mediaPlayback"
@@ -206,9 +95,6 @@
             </intent-filter>
         </service>
 
-        <!-- Media button receiver (also provided by audio_service). Handles
-             hardware/Bluetooth/headset transport buttons and the media-button
-             intents Android Auto and the system route to the session. -->
         <receiver
             android:name="com.ryanheise.audioservice.MediaButtonReceiver"
             android:exported="true">
@@ -217,30 +103,10 @@
             </intent-filter>
         </receiver>
 
-        <!-- Declares Linthra to Android Auto as a media app so it's listed in
-             the car launcher and Auto binds to the MediaBrowserService above to
-             load the browsable tree (Library / Queue). Points at
-             res/xml/automotive_app_desc.xml, which claims only the "media"
-             capability. -->
         <meta-data
             android:name="com.google.android.gms.car.application"
             android:resource="@xml/automotive_app_desc" />
 
-        <!-- FileProvider for Navidrome/Subsonic media-session cover art.
-
-             The platform media session (lock screen / Android Auto) loads
-             MediaItem.artUri in its OWN process, which can't read an app-private
-             file: path — so the cover Linthra fetched and cached is exposed to it
-             as a content:// URI served here instead. The MediaArtworkFileProvider
-             subclass grants the media consumers (Android Auto / SystemUI /
-             Bluetooth) read access to each cover URI when Linthra opens it, so
-             those processes can actually read it; exported="false" +
-             grantUriPermissions keeps nothing world-readable — only those
-             explicit per-URI read grants apply. It serves ONLY the private cover
-             cache (res/xml/media_artwork_paths.xml), whose filenames are SHA-256
-             hashes of a credential-free reference — never a username, token,
-             salt, server URL, or auth query. The authority is fixed (matches
-             kMediaArtworkAuthority in media_artwork_content_uri.dart). -->
         <provider
             android:name=".MediaArtworkFileProvider"
             android:authorities="io.github.thezupzup.linthra.mediaartwork"
@@ -251,27 +117,15 @@
                 android:resource="@xml/media_artwork_paths" />
         </provider>
 
-        <!-- Don't delete the meta-data below.
-             This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
     </application>
-    <!-- Required to query activities that can process text, see:
-         https://developer.android.com/training/package-visibility and
-         https://developer.android.com/reference/android/content/Intent#ACTION_PROCESS_TEXT.
-
-         In particular, this is used by the Flutter engine in io.flutter.plugin.text.ProcessTextPlugin. -->
     <queries>
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
         </intent>
-        <!-- Lets url_launcher resolve a browser for the "Report a bug" →
-             "Open GitHub issue" action on Android 11+ (package visibility).
-             Without it, launching the prefilled https issue URL can fail to
-             find a handler. This only declares intent visibility — it grants no
-             new permission and opens nothing on its own. -->
         <intent>
             <action android:name="android.intent.action.VIEW"/>
             <data android:scheme="https"/>
