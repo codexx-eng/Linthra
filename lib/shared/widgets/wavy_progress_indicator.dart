@@ -88,13 +88,13 @@ class _WavyProgressIndicatorState extends State<WavyProgressIndicator> {
           double sum = 0;
           final next = List<double>.filled(32, 0.0);
           for (int i = 0; i < 32; i++) {
-            final v = (raw[i] as num).toDouble();
+            final v = ((raw.elementAt(i) as num).toDouble() * 1.45).clamp(0.0, 1.0);
             sum += v;
-            // Subida rapida e descida suave igual ao Cava real
-            next[i] = v > _bands[i] ? v : (_bands[i] * 0.72 + v * 0.28);
+            final prev = _bands.elementAt(i);
+            next.insert(i, v > prev ? v : (prev * 0.68 + v * 0.32));
           }
           setState(() {
-            _bands = sum > 0.01 ? next : _simulatedBands(_fallbackPhase);
+            _bands = sum > 0.01 ? next.sublist(0, 32) : _simulatedBands(_fallbackPhase);
           });
           return;
         }
@@ -198,9 +198,8 @@ class _WavyProgressPainter extends CustomPainter {
     final double origin = rtl ? size.width - inset : inset;
     final double direction = rtl ? -1.0 : 1.0;
 
-    // Base reta embaixo e altura maxima bem alta igual ao Lark Player ("Ascensao")
-    final double baseY = (size.height / 2) + math.max(13.0, amplitude * 4.3);
-    final double maxBarHeight = math.max(28.0, amplitude * 10.5);
+    final double baseY = (size.height / 2) + math.max(14.0, amplitude * 4.5);
+    final double maxBarHeight = math.max(30.0, amplitude * 11.0);
     final double minBarHeight = 2.5;
 
     final double barWidth = math.max(3.2, strokeWidth * 1.15);
@@ -215,22 +214,18 @@ class _WavyProgressPainter extends CustomPainter {
     const Radius barRadius = Radius.circular(1.0);
 
     for (int i = 0; i < barCount; i++) {
-      final double normPos = barCount > 1 ? i / (barCount - 1) : 0.5;
+      final double normPos = barCount > 1 ? i / (barCount - 1) : 0.0;
       final double d = (i + 0.5) * (trackWidth / barCount);
       final double x = origin + direction * d;
       final bool isElapsed = d <= elapsed;
 
-      // Espelha os graves no centro e agudos nas pontas (formato Ascensao)
-      final double distFromCenter = (normPos - 0.5).abs() * 2.0;
+      // Estilo Cava real: graves na esquerda (0) ate agudos na direita (31)
       final int bandIdx =
-          (distFromCenter * (bands.length - 1)).round().clamp(0, bands.length - 1);
-      final double energy = bands[bandIdx];
-
-      final double arch = math.sin(normPos * math.pi);
-      final double envelope = 0.35 + 0.65 * math.pow(arch, 1.1);
+          (normPos * (bands.length - 1)).round().clamp(0, bands.length - 1);
+      final double energy = bands.elementAt(bandIdx);
 
       final double barHeight =
-          minBarHeight + (maxBarHeight - minBarHeight) * envelope * energy;
+          minBarHeight + (maxBarHeight - minBarHeight) * energy;
 
       barPaint.color = isElapsed ? activeColor : inactiveColor;
 
