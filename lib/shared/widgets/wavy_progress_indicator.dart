@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 class WavyProgressIndicator extends StatefulWidget {
   const WavyProgressIndicator({
@@ -42,87 +43,117 @@ class WavyProgressIndicator extends StatefulWidget {
   State<WavyProgressIndicator> createState() => _WavyProgressIndicatorState();
 }
 
-class _WavyProgressIndicatorState extends State<WavyProgressIndicator>
-    with TickerProviderStateMixin {
-  static const double _restingScale = 0.08;
+class _WavyProgressIndicatorState extends State<WavyProgressIndicator> {
+  static const MethodChannel _channel =
+      MethodChannel('io.github.thezupzup.linthra/cava_visualizer');
 
-  late final AnimationController _swellController = AnimationController(
-    vsync: this,
-    duration: widget.transitionDuration,
-    value: widget.active ? 1.0 : 0.0,
-  );
-
-  late final Animation<double> _swell = _swellController.drive(
-    Tween<double>(begin: _restingScale, end: 1.0)
-        .chain(CurveTween(curve: Curves.easeOutCubic)),
-  );
-
-  late final AnimationController _cavaController = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 850),
-  );
+  Timer? _timer;
+  List<double> _bands = List<double>.filled(32, 0.0);
+  double _fallbackPhase = 0.0;
 
   @override
   void initState() {
     super.initState();
     if (widget.active) {
-      unawaited(_cavaController.repeat());
+      _startAudioSync();
     }
   }
 
   @override
   void didUpdateWidget(WavyProgressIndicator oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.transitionDuration != widget.transitionDuration) {
-      _swellController.duration = widget.transitionDuration;
-    }
-    if (widget.active) {
-      if (!_cavaController.isAnimating) {
-        unawaited(_cavaController.repeat());
-      }
-      if (_swellController.value < 1.0 && !_swellController.isAnimating) {
-        unawaited(_swellController.forward());
-      }
-    } else {
-      if (_cavaController.isAnimating) {
-        _cavaController.stop();
-      }
-      if (_swellController.value > 0.0 && !_swellController.isAnimating) {
-        unawaited(_swellController.reverse());
+    if (oldWidget.active != widget.active) {
+      if (widget.active) {
+        _startAudioSync();
+      } else {
+        _stopAudioSync();
       }
     }
   }
 
+  Future<void> _startAudioSync() async {
+    _timer?.cancel();
+    try {
+      await _channel.invokeMethod('start');
+    } catch (_) {}
+
+    _timer = Timer.periodic(const Duration(milliseconds: 35), (_) async {
+      if (!mounted || !widget.active) return;
+      _fallbackPhase += 0.18;
+      try {
+        final List<dynamic>? raw =
+            await _channel.invokeMethod<List<dynamic>>('getBands');
+        if (!mounted) return;
+        if (raw != null && raw.length == 32) {
+          double sum = 0;
+          final next = List<double>.filled(32, 0.0);
+          for (int i = 0; i < 32; i++) {
+            final v = (raw[i] as num).toDouble();
+            sum += v;
+            // Subida rapida e descida suave igual ao Cava real
+            next[i] = v > _bands[i] ? v : (_bands[i] * 0.72 + v * 0.28);
+          }
+          setState(() {
+            _bands = sum > 0.01 ? next : _simulatedBands(_fallbackPhase);
+          });
+          return;
+        }
+      } catch (_) {}
+      if (mounted) {
+        setState(() {
+          _bands = _simulatedBands(_fallbackPhase);
+        });
+      }
+    });
+  }
+
+  void _stopAudioSync() {
+    _timer?.cancel();
+    _timer = null;
+    try {
+      _channel.invokeMethod('stop');
+    } catch (_) {}
+    if (mounted) {
+      setState(() {
+        _bands = List<double>.filled(32, 0.0);
+      });
+    }
+  }
+
+  List<double> _simulatedBands(double t) {
+    final beat = math.pow((math.sin(t * 2.0) + 1.0) / 2.0, 1.5).toDouble();
+    return List<double>.generate(32, (i) {
+      final w1 = math.sin(i * 0.95 + t * 2.5);
+      final w2 = math.cos(i * 1.85 - t * 3.5);
+      final raw = ((w1 * 0.55 + w2 * 0.45) + 1.0) / 2.0;
+      return (raw * (0.4 + 0.6 * beat)).clamp(0.0, 1.0);
+    });
+  }
+
   @override
   void dispose() {
-    _swellController.dispose();
-    _cavaController.dispose();
+    _timer?.cancel();
+    try {
+      _channel.invokeMethod('stop');
+    } catch (_) {}
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return RepaintBoundary(
-      child: AnimatedBuilder(
-        animation: Listenable.merge([_swell, _cavaController]),
-        builder: (BuildContext context, Widget? child) {
-          return CustomPaint(
-            size: Size.infinite,
-            painter: _WavyProgressPainter(
-              swellValue: _swell.value,
-              phaseValue: _cavaController.value,
-              value: widget.value,
-              activeColor: widget.activeColor,
-              inactiveColor: widget.inactiveColor,
-              thumbColor: widget.thumbColor ?? widget.activeColor,
-              amplitude: widget.amplitude,
-              wavelength: widget.wavelength,
-              strokeWidth: widget.strokeWidth,
-              thumbRadius: widget.thumbRadius,
-              textDirection: Directionality.of(context),
-            ),
-          );
-        },
+      child: CustomPaint(
+        size: Size.infinite,
+        painter: _WavyProgressPainter(
+          bands: _bands,
+          value: widget.value,
+          activeColor: widget.activeColor,
+          inactiveColor: widget.inactiveColor,
+          amplitude: widget.amplitude,
+          strokeWidth: widget.strokeWidth,
+          thumbRadius: widget.thumbRadius,
+          textDirection: Directionality.of(context),
+        ),
       ),
     );
   }
@@ -130,27 +161,21 @@ class _WavyProgressIndicatorState extends State<WavyProgressIndicator>
 
 class _WavyProgressPainter extends CustomPainter {
   _WavyProgressPainter({
-    required this.swellValue,
-    required this.phaseValue,
+    required this.bands,
     required this.value,
     required this.activeColor,
     required this.inactiveColor,
-    required this.thumbColor,
     required this.amplitude,
-    required this.wavelength,
     required this.strokeWidth,
     required this.thumbRadius,
     required this.textDirection,
   });
 
-  final double swellValue;
-  final double phaseValue;
+  final List<double> bands;
   final double value;
   final Color activeColor;
   final Color inactiveColor;
-  final Color thumbColor;
   final double amplitude;
-  final double wavelength;
   final double strokeWidth;
   final double thumbRadius;
   final TextDirection textDirection;
@@ -173,24 +198,21 @@ class _WavyProgressPainter extends CustomPainter {
     final double origin = rtl ? size.width - inset : inset;
     final double direction = rtl ? -1.0 : 1.0;
 
-    // Base alinhada embaixo igual ao Lark Player ("Ascensao")
-    final double baseY = (size.height / 2) + math.max(9.0, amplitude * 3.0);
-    final double maxBarHeight = math.max(20.0, amplitude * 7.2);
+    // Base reta embaixo e altura maxima bem alta igual ao Lark Player ("Ascensao")
+    final double baseY = (size.height / 2) + math.max(13.0, amplitude * 4.3);
+    final double maxBarHeight = math.max(28.0, amplitude * 10.5);
     final double minBarHeight = 2.5;
 
-    // Barrinhas estilo Lark / Cava: um pouco mais largas e bem juntinhas
     final double barWidth = math.max(3.2, strokeWidth * 1.15);
     final double gap = 2.2;
     final double step = barWidth + gap;
     final int barCount = math.max(1, (trackWidth / step).floor());
 
-    final double t = phaseValue * 2 * math.pi;
-
     final Paint barPaint = Paint()
       ..style = PaintingStyle.fill
       ..isAntiAlias = true;
 
-    final Radius barRadius = const Radius.circular(1.0);
+    const Radius barRadius = Radius.circular(1.0);
 
     for (int i = 0; i < barCount; i++) {
       final double normPos = barCount > 1 ? i / (barCount - 1) : 0.5;
@@ -198,20 +220,17 @@ class _WavyProgressPainter extends CustomPainter {
       final double x = origin + direction * d;
       final bool isElapsed = d <= elapsed;
 
-      // Envoltorio estilo "Ascensao": picos mais altos no centro/graves e menores nas pontas
+      // Espelha os graves no centro e agudos nas pontas (formato Ascensao)
+      final double distFromCenter = (normPos - 0.5).abs() * 2.0;
+      final int bandIdx =
+          (distFromCenter * (bands.length - 1)).round().clamp(0, bands.length - 1);
+      final double energy = bands[bandIdx];
+
       final double arch = math.sin(normPos * math.pi);
-      final double envelope = 0.28 + 0.72 * math.pow(arch, 1.3);
+      final double envelope = 0.35 + 0.65 * math.pow(arch, 1.1);
 
-      // Movimento estilo Cava com batidas rapidas e ondas cruzadas
-      final double beat = math.pow((math.sin(t * 2.0) + 1.0) / 2.0, 1.5).toDouble();
-      final double w1 = math.sin(i * 0.95 + t * 3.0);
-      final double w2 = math.cos(i * 1.85 - t * 4.0);
-      final double w3 = math.sin(i * 2.75 + t * 2.0);
-      final double raw = ((w1 * 0.45 + w2 * 0.35 + w3 * 0.20) + 1.0) / 2.0;
-      final double energy = (raw * (0.45 + 0.55 * beat)).clamp(0.0, 1.0);
-
-      final double barHeight = minBarHeight +
-          (maxBarHeight - minBarHeight) * envelope * energy * swellValue;
+      final double barHeight =
+          minBarHeight + (maxBarHeight - minBarHeight) * envelope * energy;
 
       barPaint.color = isElapsed ? activeColor : inactiveColor;
 
@@ -231,16 +250,5 @@ class _WavyProgressPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(_WavyProgressPainter oldDelegate) =>
-      oldDelegate.value != value ||
-      oldDelegate.activeColor != activeColor ||
-      oldDelegate.inactiveColor != inactiveColor ||
-      oldDelegate.thumbColor != thumbColor ||
-      oldDelegate.amplitude != amplitude ||
-      oldDelegate.wavelength != wavelength ||
-      oldDelegate.strokeWidth != strokeWidth ||
-      oldDelegate.thumbRadius != thumbRadius ||
-      oldDelegate.textDirection != textDirection ||
-      oldDelegate.swellValue != swellValue ||
-      oldDelegate.phaseValue != phaseValue;
+  bool shouldRepaint(_WavyProgressPainter oldDelegate) => true;
 }
