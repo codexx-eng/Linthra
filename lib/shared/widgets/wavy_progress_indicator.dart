@@ -44,7 +44,7 @@ class WavyProgressIndicator extends StatefulWidget {
 
 class _WavyProgressIndicatorState extends State<WavyProgressIndicator>
     with TickerProviderStateMixin {
-  static const double _restingScale = 0.12;
+  static const double _restingScale = 0.08;
 
   late final AnimationController _swellController = AnimationController(
     vsync: this,
@@ -59,7 +59,7 @@ class _WavyProgressIndicatorState extends State<WavyProgressIndicator>
 
   late final AnimationController _cavaController = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 900),
+    duration: const Duration(milliseconds: 850),
   );
 
   @override
@@ -155,9 +155,6 @@ class _WavyProgressPainter extends CustomPainter {
   final double thumbRadius;
   final TextDirection textDirection;
 
-  static const double _haloScale = 1.7;
-  static const double _haloAlpha = 0.22;
-
   @override
   void paint(Canvas canvas, Size size) {
     if (size.isEmpty) return;
@@ -169,73 +166,62 @@ class _WavyProgressPainter extends CustomPainter {
     final double trackWidth = size.width - inset * 2;
     if (trackWidth <= 0) return;
 
-    final double centerY = size.height / 2;
     final double fraction = _safeFraction(value);
     final double elapsed = trackWidth * fraction;
 
     final bool rtl = textDirection == TextDirection.rtl;
     final double origin = rtl ? size.width - inset : inset;
     final double direction = rtl ? -1.0 : 1.0;
-    final double markerX = origin + direction * elapsed;
 
-    final double barWidth = math.max(2.0, strokeWidth * 0.85);
-    final double gap = barWidth * 1.15;
+    // Base alinhada embaixo igual ao Lark Player ("Ascensao")
+    final double baseY = (size.height / 2) + math.max(9.0, amplitude * 3.0);
+    final double maxBarHeight = math.max(20.0, amplitude * 7.2);
+    final double minBarHeight = 2.5;
+
+    // Barrinhas estilo Lark / Cava: um pouco mais largas e bem juntinhas
+    final double barWidth = math.max(3.2, strokeWidth * 1.15);
+    final double gap = 2.2;
     final double step = barWidth + gap;
     final int barCount = math.max(1, (trackWidth / step).floor());
 
-    final double maxHalfHeight = math.max(5.5, amplitude * 2.8);
-    final double minHalfHeight = math.max(1.2, strokeWidth * 0.45);
     final double t = phaseValue * 2 * math.pi;
 
     final Paint barPaint = Paint()
       ..style = PaintingStyle.fill
       ..isAntiAlias = true;
 
-    final Radius barRadius = Radius.circular(barWidth / 2);
+    final Radius barRadius = const Radius.circular(1.0);
 
     for (int i = 0; i < barCount; i++) {
+      final double normPos = barCount > 1 ? i / (barCount - 1) : 0.5;
       final double d = (i + 0.5) * (trackWidth / barCount);
       final double x = origin + direction * d;
       final bool isElapsed = d <= elapsed;
 
-      // Simulacao de espectro de graves, medios e agudos estilo Cava
-      final double beat = (math.sin(t * 2.0) + 1.0) / 2.0;
-      final double w1 = math.sin(i * 0.85 + t * 3.0);
-      final double w2 = math.cos(i * 1.65 - t * 4.0);
-      final double w3 = math.sin(i * 2.40 + t * 2.0);
-      final double raw = ((w1 * 0.45 + w2 * 0.35 + w3 * 0.20) + 1.0) / 2.0;
-      final double energy = (raw * (0.55 + 0.45 * beat)).clamp(0.0, 1.0);
+      // Envoltorio estilo "Ascensao": picos mais altos no centro/graves e menores nas pontas
+      final double arch = math.sin(normPos * math.pi);
+      final double envelope = 0.28 + 0.72 * math.pow(arch, 1.3);
 
-      final double regionScale = isElapsed ? 1.0 : 0.40;
-      final double dynamicJump =
-          (maxHalfHeight - minHalfHeight) * energy * swellValue * regionScale;
-      final double halfHeight = minHalfHeight + dynamicJump;
+      // Movimento estilo Cava com batidas rapidas e ondas cruzadas
+      final double beat = math.pow((math.sin(t * 2.0) + 1.0) / 2.0, 1.5).toDouble();
+      final double w1 = math.sin(i * 0.95 + t * 3.0);
+      final double w2 = math.cos(i * 1.85 - t * 4.0);
+      final double w3 = math.sin(i * 2.75 + t * 2.0);
+      final double raw = ((w1 * 0.45 + w2 * 0.35 + w3 * 0.20) + 1.0) / 2.0;
+      final double energy = (raw * (0.45 + 0.55 * beat)).clamp(0.0, 1.0);
+
+      final double barHeight = minBarHeight +
+          (maxBarHeight - minBarHeight) * envelope * energy * swellValue;
 
       barPaint.color = isElapsed ? activeColor : inactiveColor;
 
-      final RRect rrect = RRect.fromRectAndRadius(
-        Rect.fromCenter(
-          center: Offset(x, centerY),
-          width: barWidth,
-          height: halfHeight * 2,
-        ),
-        barRadius,
+      final Rect rect = Rect.fromLTWH(
+        x - barWidth / 2,
+        baseY - barHeight,
+        barWidth,
+        barHeight,
       );
-      canvas.drawRRect(rrect, barPaint);
-    }
-
-    if (thumbRadius > 0) {
-      final Paint fill = Paint()..isAntiAlias = true;
-      canvas.drawCircle(
-        Offset(markerX, centerY),
-        thumbRadius * _haloScale,
-        fill..color = thumbColor.withValues(alpha: _haloAlpha),
-      );
-      canvas.drawCircle(
-        Offset(markerX, centerY),
-        thumbRadius,
-        fill..color = thumbColor,
-      );
+      canvas.drawRRect(RRect.fromRectAndRadius(rect, barRadius), barPaint);
     }
   }
 
